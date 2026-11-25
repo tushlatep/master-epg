@@ -34,7 +34,7 @@ def build(config):
                 grouped.setdefault(p.get("channel"),[]).append(p)
             for cid, items in grouped.items():
                 if not programmes.get(cid): programmes[cid]=items
-        except Exception as e: errors.append(str(e))
+        except Exception as e: errors.append(source["url"]+": "+str(e))
     if errors: raise RuntimeError("Source failure; retain previous output: "+str(errors))
     logos={}
     for entry in config.get("logos",[]):
@@ -68,6 +68,7 @@ def build(config):
     data=ET.tostring(root,encoding="utf-8",xml_declaration=True)
     ET.fromstring(data)
     tmp=out/"master-epg.xml.gz.tmp"; tmp.write_bytes(gzip.compress(data)); tmp.replace(out/"master-epg.xml.gz")
+    (out/"index.html").write_text("""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Master EPG Health</title><h1>Master EPG Health</h1><p id=status>Loading report...</p><pre id=report></pre><p><a href=master-epg.xml.gz>XMLTV guide</a></p><script>fetch("report.json",{cache:"no-store"}).then(r=>{if(!r.ok)throw Error(r.status);return r.json()}).then(d=>{document.getElementById("status").textContent=(Date.now()-Date.parse(d.updated)>43200000)?"Stale guide":"Recent guide";document.getElementById("report").textContent=JSON.stringify(d,null,2)}).catch(e=>document.getElementById("status").textContent="Report unavailable: "+e)</script>""")
     (out/"report.json").write_text(json.dumps({"channels":len(channels),"channels_with_icons":sum(c.find("icon") is not None for c in channels.values()),"programmes":count,"future_programmes":future,"updated":now.isoformat()},indent=2))
 if __name__=="__main__":
     build(json.loads(Path("config.json").read_text()))
