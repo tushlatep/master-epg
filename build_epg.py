@@ -16,7 +16,7 @@ def build(config):
     root=ET.Element("tv", {"generator-info-name":"Master EPG"})
     channels={}; programmes={}; errors=[]
     for source in config["sources"]:
-        if not source.get("enabled") or not source.get("redistribution_confirmed"): continue
+        if not source.get("enabled") or not (source.get("redistribution_confirmed") or config.get("allow_unverified_sources")): continue
         try:
             tree=ET.fromstring(fetch(source["url"]))
             if tree.tag!="tv": raise ValueError("Not XMLTV")
@@ -38,7 +38,7 @@ def build(config):
     if errors: raise RuntimeError("Source failure; retain previous output: "+str(errors))
     logos={}
     for entry in config.get("logos",[]):
-        if entry.get("redistribution_confirmed"):
+        if entry.get("redistribution_confirmed") or config.get("allow_unverified_sources"):
             for item in json.loads(fetch(entry["url"])):
                 cid=item.get("channel"); url=item.get("url","")
                 if cid and url.startswith("https://"): logos.setdefault(cid,url)
