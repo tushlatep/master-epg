@@ -1,0 +1,18 @@
+{
+  "min_channels": 100,
+  "sources": [
+    {
+      "name": "EPGShare01",
+      "url": "https://epgshare01.online/epgshare01/epg_ripper_ALL_SOURCES1.xml.gz",
+      "enabled": false,
+      "redistribution_confirmed": false
+    }
+  ],
+  "logos": [
+    {
+      "url": "https://iptv-org.github.io/api/logos.json",
+      "redistribution_confirmed": false
+    }
+  ],
+  "aliases": {}
+}
