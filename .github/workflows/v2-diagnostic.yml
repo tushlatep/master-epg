@@ -1,0 +1,48 @@
+name: V2 baseline diagnostic
+on:
+  push:
+    branches: [epg-v2-strict]
+    paths: ['.github/workflows/v2-diagnostic.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p audit
+          python - <<'PY'
+          import urllib.request, gzip, json, xml.etree.ElementTree as ET
+          from datetime import datetime, timezone
+          from collections import Counter
+          from pathlib import Path
+          now=datetime.now(timezone.utc)
+          urls={'production':'https://tushlatep.github.io/master-epg/master-epg.xml.gz','upstream':'https://epgshare01.online/epgshare01/epg_ripper_ALL_SOURCES1.xml.gz'}
+          report={}
+          for name,url in urls.items():
+              try:
+                  with urllib.request.urlopen(url,timeout=120) as r:
+                      data=r.read(150000001)
+                  if len(data)>150000000: raise ValueError('oversized')
+                  root=ET.fromstring(gzip.decompress(data) if data.startswith(bytes([31,139])) else data)
+                  if root.tag!='tv': raise ValueError('not XMLTV')
+                  future=Counter()
+                  for p in root.findall('programme'):
+                      try:
+                          start=datetime.strptime(p.get('start',''),'%Y%m%d%H%M%S %z')
+                          stop=datetime.strptime(p.get('stop',''),'%Y%m%d%H%M%S %z')
+                          if stop>now and stop>start: future[p.get('channel')]+=1
+                      except ValueError: pass
+                  rows=[{'id':c.get('id'),'names':[n.text for n in c.findall('display-name')],'future':future[c.get('id')]} for c in root.findall('channel')]
+                  Path('audit/'+name+'.json').write_text(json.dumps(rows))
+                  report[name]={'channels':len(rows),'with_future':sum(r['future']>0 for r in rows)}
+              except Exception as e: report[name]={'error':str(e)}
+          Path('audit/report.json').write_text(json.dumps(report,indent=2))
+          print(report)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v2-baseline
+          path: audit/
