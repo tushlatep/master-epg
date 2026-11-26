@@ -1,0 +1,76 @@
+name: V2 consolidated validation
+on:
+  push:
+    branches: [epg-v2-strict]
+    paths: ['.github/workflows/v2-consolidated.yml', 'v2/**']
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regression tests
+        run: python -m unittest discover -s v2 -p 'test_*.py' -v
+      - name: Source and schedule audit
+        run: |
+          mkdir -p audit
+          python - <<'PY'
+          import urllib.request,gzip,json,xml.etree.ElementTree as ET
+          from datetime import datetime,timezone
+          from collections import Counter
+          from pathlib import Path
+          from concurrent.futures import ThreadPoolExecutor
+          from v2.schedule_quality import quality
+          from collections import defaultdict
+          now=datetime.now(timezone.utc)
+          urls={**{'pw_'+c:'https://epg.pw/xmltv/epg_'+c+'.xml.gz' for c in ['US','CA','GB','IN','AU']},**{'open_'+c:'https://www.open-epg.com/files/'+c+'.xml.gz' for c in ['canada','india','unitedkingdom','australia']+['unitedstates'+str(i) for i in range(1,12)]}}
+          def audit(item):
+              name,url=item
+              try:
+                  with urllib.request.urlopen(url,timeout=90) as r: data=r.read(100000001)
+                  if len(data)>100000000: raise ValueError('oversized')
+                  root=ET.fromstring(gzip.decompress(data) if data.startswith(bytes([31,139])) else data)
+                  if root.tag!='tv': raise ValueError('not XMLTV')
+                  future=Counter()
+                  programmes=defaultdict(list)
+                  for p in root.findall('programme'):
+                      programmes[p.get('channel')].append(p.attrib)
+                      try:
+                          start=datetime.strptime(p.get('start',''),'%Y%m%d%H%M%S %z')
+                          stop=datetime.strptime(p.get('stop',''),'%Y%m%d%H%M%S %z')
+                          if stop>now and stop>start: future[p.get('channel')]+=1
+                      except ValueError: pass
+                  rows=[{'id':c.get('id'),'names':[n.text for n in c.findall('display-name')],'future':future[c.get('id')],'quality':quality(programmes[c.get('id')],now)} for c in root.findall('channel')]
+                  Path('audit/'+name+'.json').write_text(json.dumps(rows))
+                  return name,{'url':url,'channels':len(rows),'with_future':sum(r['future']>0 for r in rows)}
+              except Exception as e: return name,{'url':url,'error':str(e)}
+          with ThreadPoolExecutor(max_workers=2) as ex: report=dict(ex.map(audit,urls.items()))
+          Path('audit/report.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Summarize and enforce source health
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('audit/report.json').read_text())
+          summary={}
+          for name,meta in report.items():
+              if 'error' in meta:
+                  summary[name]=meta
+                  continue
+              rows=json.loads(Path('audit/'+name+'.json').read_text())
+              good=[r for r in rows if r['future']>0 and r['quality']['current'] and r['quality']['coverage_pct']==100 and not r['quality']['overlap_minutes'] and not r['quality']['invalid']]
+              summary[name]={'records':len(rows),'complete_current':len(good)}
+          Path('audit/summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          if not any(x.get('complete_current',0)>0 for x in summary.values()):
+              raise SystemExit('No usable source')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: consolidated-validation
+          path: audit/
